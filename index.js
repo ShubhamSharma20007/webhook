@@ -7,7 +7,7 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 app.use(cors("*"));
 app.post(
-  "/webhook",
+  "/stripe/webhook",
   express.raw({ type: "application/json" }),
   (req, res) => {
     const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
