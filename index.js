@@ -92,31 +92,66 @@ app.post("/stripe-checkout-session", async (req, res) => {
   }
 });
 app.post(
-  '/test/webhook',
-  express.raw({ type: 'application/json' }),
-  async(req, res) => {
-    const sign = req.headers['stripe-signature'];
+  "/test/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const sig = req.headers["stripe-signature"];
     const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
-    let event;
 
+    let event;
     try {
-      event = stripe.webhooks.constructEvent(req.body, sign, endpointSecret);
-    } catch (error) {
-      console.error('Webhook signature verification failed:', error.message);
-      return res.status(400).send(`Webhook Error: ${error.message}`);
+      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+    } catch (err) {
+      console.error("⚠️ Webhook signature verification failed:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
+    // Handle webhook events
     switch (event.type) {
-      case 'checkout.session.completed': {
+      case "checkout.session.completed": {
         const session = event.data.object;
-        console.log('Checkout Session Completed:', session);
-         await updateUserBalance(customerEmail, amount);
+        const customerEmail = session.customer_email;
+        const amount = session.amount_total / 100;
+
+        console.log(`✅ Payment completed: ${customerEmail} paid $${amount}`);
+
+        // Example: add to user balance in DB
+        await updateUserBalance(customerEmail, amount);
+
         break;
       }
 
-      case 'invoice.payment_failed': {
+      case "invoice.payment_succeeded": {
         const invoice = event.data.object;
-        console.log('Invoice Payment Failed:', invoice);
+        const customerId = invoice.customer;
+        const amount = invoice.amount_paid / 100;
+
+        console.log(`💰 Subscription payment succeeded for ${customerId}`);
+
+        // Add to balance
+        await updateUserBalance(customerId, amount);
+
+        break;
+      }
+
+      case "invoice.payment_failed": {
+        const invoice = event.data.object;
+        const customerId = invoice.customer;
+        console.log(`❌ Payment failed for ${customerId}`);
+        // Optionally flag user as unpaid or deduct credits
+        break;
+      }
+
+      case "charge.refunded": {
+        const charge = event.data.object;
+        const amount = charge.amount_refunded / 100;
+        const customerId = charge.customer;
+
+        console.log(`💸 Refund processed for ${customerId}`);
+
+        // Deduct from user balance
+        await updateUserBalance(customerId, -amount);
+
         break;
       }
 
@@ -127,7 +162,6 @@ app.post(
     res.json({ received: true });
   }
 );
-
 
 // ✅ CORS setup
 app.use(cors({ origin: "*" }))
