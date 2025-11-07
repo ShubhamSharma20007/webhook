@@ -2,14 +2,17 @@ import express from "express";
 import cors from "cors";
 import Stripe from "stripe";
 import dotenv from "dotenv";
+import User from "./user.schema.js";
+import connectDB from "./db.js";
 
 dotenv.config();
 
 const app = express();
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-
 // ✅ CORS and JSON parser
 app.use(cors());
+
+
 
 // ✅ Use express.json() for all routes EXCEPT /webhook
 app.use((req, res, next) => {
@@ -19,6 +22,30 @@ app.use((req, res, next) => {
     express.json()(req, res, next);
   }
 });
+
+connectDB()
+
+
+
+
+export async function updateUserBalance(userIdOrEmail, amountChange) {
+  let user = await User.findOne({ email: userIdOrEmail });
+
+  if (!user) {
+    // Auto-create user if not found
+    user = await User.create({
+      email: userIdOrEmail,
+      name: "New User",
+      balance: amountChange,
+    });
+    console.log(`🆕 Created new user with balance: ${user.balance}`);
+  } else {
+    user.balance = (user.balance || 0) + amountChange;
+    await user.save();
+    console.log(`💾 Updated balance for ${user.email}: ${user.balance}`);
+  }
+}
+
 
 app.get("/", (req, res) => {
   res.send("Server is running on port 8000 🚀");
@@ -67,7 +94,7 @@ app.post("/stripe-checkout-session", async (req, res) => {
 app.post(
   '/test/webhook',
   express.raw({ type: 'application/json' }),
-  (req, res) => {
+  async(req, res) => {
     const sign = req.headers['stripe-signature'];
     const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
     let event;
@@ -83,6 +110,7 @@ app.post(
       case 'checkout.session.completed': {
         const session = event.data.object;
         console.log('Checkout Session Completed:', session);
+         await updateUserBalance(customerEmail, amount);
         break;
       }
 
