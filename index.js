@@ -36,10 +36,13 @@ async function updateUserBalance(
   planName = null // ✅ new argument for plan name
 ) {
   try {
-    // 1️⃣ Try finding the user by email OR Stripe customer ID
     let user = await User.findOne({
-      $or: [{ email: identifier }, { stripeCustomerId: identifier }]
-    });
+    $or: [
+      { email: identifier },
+      { stripeCustomerId: stripeCustomerId || identifier }
+    ]
+  });
+
 
     // 2️⃣ If no user exists, create a new one
     if (!user) {
@@ -182,8 +185,7 @@ app.post(
   }
 
 
-  //  upgrade and downgrade plan
-  case "customer.subscription.created": {
+case "customer.subscription.created": {
   const subscription = event.data.object;
   const customerId = subscription.customer;
   const planId = subscription.items.data[0].price.id;
@@ -191,18 +193,20 @@ app.post(
 
   console.log(`🆕 Subscription created for ${customerId} (${planName})`);
 
+  // ✅ Just update, don’t upsert (avoid new user creation)
   await User.findOneAndUpdate(
     { stripeCustomerId: customerId },
     {
-      plan: planName,
+      planName,
       subscriptionId: subscription.id,
       status: "active",
     },
-    { new: true, upsert: true }
+    { new: true }
   );
 
   break;
 }
+
 
 case "customer.subscription.updated": {
   const subscription = event.data.object;
