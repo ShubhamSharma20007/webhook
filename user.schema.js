@@ -18,15 +18,15 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    subscriptionId:{
+        type:String,
+        default:null
+    },
     balance: {
       type: Number,
       default: 0, // start with 0 balance
     },
-    plan: {
-      type: String,
-      enum: ["free", "basic", "pro", "enterprise"],
-      default: "free",
-    },
+     planName: { type: String, default: "free" },
     status: {
       type: String,
       enum: ["active", "inactive", "unpaid"],

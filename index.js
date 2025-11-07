@@ -28,33 +28,64 @@ connectDB()
 
 
 
-export async function updateUserBalance(identifier, amountChange, stripeCustomerId = null) {
-  // Try finding user by email OR Stripe ID
-  let user = await User.findOne({
-    $or: [{ email: identifier }, { stripeCustomerId: identifier }]
-  });
-
-  if (!user) {
-    user = await User.create({
-      email: identifier.includes("@") ? identifier : `unknown_${Date.now()}@placeholder.com`,
-      name: "New User",
-      stripeCustomerId: stripeCustomerId || null,
-      balance: amountChange,
+async function updateUserBalance(
+  identifier,
+  amountChange,
+  stripeCustomerId = null,
+  subscriptionId = null,
+  planName = null // ✅ new argument for plan name
+) {
+  try {
+    // 1️⃣ Try finding the user by email OR Stripe customer ID
+    let user = await User.findOne({
+      $or: [{ email: identifier }, { stripeCustomerId: identifier }]
     });
-    console.log(`🆕 Created new user: ${user.email}, Balance: ${user.balance}`);
-  } else {
-    user.balance = (user.balance || 0) + amountChange;
 
-    // ✅ If we received a new Stripe ID, update it
-    if (stripeCustomerId && !user.stripeCustomerId) {
-      user.stripeCustomerId = stripeCustomerId;
+    // 2️⃣ If no user exists, create a new one
+    if (!user) {
+      user = await User.create({
+        email: identifier.includes("@") ? identifier : `unknown_${Date.now()}@placeholder.com`,
+        name: "New User",
+        stripeCustomerId: stripeCustomerId || null,
+        subscriptionId: subscriptionId || null,
+        planName: planName || "free", // ✅ store plan
+        balance: amountChange,
+      });
+
+      console.log(`🆕 Created new user: ${user.email}, Plan: ${user.planName}, Balance: ${user.balance}`);
+    } 
+    // 3️⃣ Update existing user
+    else {
+      user.balance = (user.balance || 0) + amountChange;
+
+      // ✅ Update Stripe-related fields if needed
+      if (stripeCustomerId && !user.stripeCustomerId) {
+        user.stripeCustomerId = stripeCustomerId;
+      }
+      if (subscriptionId && !user.subscriptionId) {
+        user.subscriptionId = subscriptionId;
+      }
+
+      // ✅ Update plan name if passed
+      if (planName) {
+        user.planName = planName;
+      }
+
+      await user.save();
+      console.log(`💾 Updated user: ${user.email}, Plan: ${user.planName}, Balance: ${user.balance}`);
     }
-
-    await user.save();
-    console.log(`💾 Updated balance for ${user.email}: ${user.balance}`);
+  } catch (err) {
+    console.error("❌ Error updating user balance:", err);
   }
 }
 
+function getPlanNameFromPriceId(priceId) {
+  const planMap = {
+    "price_1SQlS1BVPnpSG7g8iUYo4snn": "pro_m",
+    "price_1SQlSUBVPnpSG7g8sjCQiCI2": "pro_y",
+  };
+  return planMap[priceId] || "free";
+}
 
 
 app.get("/", (req, res) => {
@@ -123,10 +154,10 @@ app.post(
     const customerEmail = session.customer_email;
     const customerId = session.customer; // ✅ Stripe customer ID
     const amount = session.amount_total / 100;
-
+    const subscriptionId = session.subscription;
     console.log(`✅ Payment completed: ${customerEmail} paid $${amount}`);
 
-    await updateUserBalance(customerEmail, amount, customerId);
+    await updateUserBalance(customerEmail, amount, customerId,subscriptionId);
     break;
   }
 
@@ -134,9 +165,9 @@ app.post(
     const invoice = event.data.object;
     const customerId = invoice.customer;
     const amount = invoice.amount_paid / 100;
-
+      const subscriptionId = session.subscription;
     console.log(`💰 Subscription payment succeeded for ${customerId}`);
-    await updateUserBalance(customerId, amount, customerId);
+    await updateUserBalance(customerId, amount, customerId,subscriptionId);
     break;
   }
 
@@ -144,11 +175,67 @@ app.post(
     const charge = event.data.object;
     const amount = charge.amount_refunded / 100;
     const customerId = charge.customer;
-
+  const subscriptionId = session.subscription;
     console.log(`💸 Refund processed for ${customerId}`);
-    await updateUserBalance(customerId, -amount, customerId);
+    await updateUserBalance(customerId, -amount, customerId,subscriptionId);
     break;
   }
+
+
+  //  upgrade and downgrade plan
+  case "customer.subscription.created": {
+  const subscription = event.data.object;
+  const customerId = subscription.customer;
+  const planId = subscription.items.data[0].price.id;
+  const planName = getPlanNameFromPriceId(planId);
+
+  console.log(`🆕 Subscription created for ${customerId} (${planName})`);
+
+  await User.findOneAndUpdate(
+    { stripeCustomerId: customerId },
+    {
+      plan: planName,
+      subscriptionId: subscription.id,
+      status: "active",
+    },
+    { new: true, upsert: true }
+  );
+
+  break;
+}
+
+case "customer.subscription.updated": {
+  const subscription = event.data.object;
+  const customerId = subscription.customer;
+  const planId = subscription.items.data[0].price.id;
+  const planName = getPlanNameFromPriceId(planId);
+
+  console.log(`🔄 Subscription updated for ${customerId}: ${planName}`);
+
+  await User.findOneAndUpdate(
+    { stripeCustomerId: customerId },
+    { plan: planName, status: "active" },
+    { new: true }
+  );
+
+  break;
+}
+
+case "customer.subscription.deleted": {
+  const subscription = event.data.object;
+  const customerId = subscription.customer;
+
+  console.log(`❌ Subscription canceled for ${customerId}`);
+
+  await User.findOneAndUpdate(
+    { stripeCustomerId: customerId },
+    { plan: "free", status: "inactive" },
+    { new: true }
+  );
+
+  break;
+}
+
 }
 
 
