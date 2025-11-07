@@ -28,23 +28,33 @@ connectDB()
 
 
 
-export async function updateUserBalance(userIdOrEmail, amountChange) {
-  let user = await User.findOne({ email: userIdOrEmail });
+export async function updateUserBalance(identifier, amountChange, stripeCustomerId = null) {
+  // Try finding user by email OR Stripe ID
+  let user = await User.findOne({
+    $or: [{ email: identifier }, { stripeCustomerId: identifier }]
+  });
 
   if (!user) {
-    // Auto-create user if not found
     user = await User.create({
-      email: userIdOrEmail,
+      email: identifier.includes("@") ? identifier : `unknown_${Date.now()}@placeholder.com`,
       name: "New User",
+      stripeCustomerId: stripeCustomerId || null,
       balance: amountChange,
     });
-    console.log(`🆕 Created new user with balance: ${user.balance}`);
+    console.log(`🆕 Created new user: ${user.email}, Balance: ${user.balance}`);
   } else {
     user.balance = (user.balance || 0) + amountChange;
+
+    // ✅ If we received a new Stripe ID, update it
+    if (stripeCustomerId && !user.stripeCustomerId) {
+      user.stripeCustomerId = stripeCustomerId;
+    }
+
     await user.save();
     console.log(`💾 Updated balance for ${user.email}: ${user.balance}`);
   }
 }
+
 
 
 app.get("/", (req, res) => {
@@ -108,56 +118,39 @@ app.post(
 
     // Handle webhook events
     switch (event.type) {
-      case "checkout.session.completed": {
-        const session = event.data.object;
-        const customerEmail = session.customer_email;
-        const amount = session.amount_total / 100;
+  case "checkout.session.completed": {
+    const session = event.data.object;
+    const customerEmail = session.customer_email;
+    const customerId = session.customer; // ✅ Stripe customer ID
+    const amount = session.amount_total / 100;
 
-        console.log(`✅ Payment completed: ${customerEmail} paid $${amount}`);
+    console.log(`✅ Payment completed: ${customerEmail} paid $${amount}`);
 
-        // Example: add to user balance in DB
-        await updateUserBalance(customerEmail, amount);
+    await updateUserBalance(customerEmail, amount, customerId);
+    break;
+  }
 
-        break;
-      }
+  case "invoice.payment_succeeded": {
+    const invoice = event.data.object;
+    const customerId = invoice.customer;
+    const amount = invoice.amount_paid / 100;
 
-      case "invoice.payment_succeeded": {
-        const invoice = event.data.object;
-        const customerId = invoice.customer;
-        const amount = invoice.amount_paid / 100;
+    console.log(`💰 Subscription payment succeeded for ${customerId}`);
+    await updateUserBalance(customerId, amount, customerId);
+    break;
+  }
 
-        console.log(`💰 Subscription payment succeeded for ${customerId}`);
+  case "charge.refunded": {
+    const charge = event.data.object;
+    const amount = charge.amount_refunded / 100;
+    const customerId = charge.customer;
 
-        // Add to balance
-        await updateUserBalance(customerId, amount);
+    console.log(`💸 Refund processed for ${customerId}`);
+    await updateUserBalance(customerId, -amount, customerId);
+    break;
+  }
+}
 
-        break;
-      }
-
-      case "invoice.payment_failed": {
-        const invoice = event.data.object;
-        const customerId = invoice.customer;
-        console.log(`❌ Payment failed for ${customerId}`);
-        // Optionally flag user as unpaid or deduct credits
-        break;
-      }
-
-      case "charge.refunded": {
-        const charge = event.data.object;
-        const amount = charge.amount_refunded / 100;
-        const customerId = charge.customer;
-
-        console.log(`💸 Refund processed for ${customerId}`);
-
-        // Deduct from user balance
-        await updateUserBalance(customerId, -amount);
-
-        break;
-      }
-
-      default:
-        console.log(`Unhandled event type: ${event.type}`);
-    }
 
     res.json({ received: true });
   }
