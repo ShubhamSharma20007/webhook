@@ -59,6 +59,11 @@ async function updateUserBalance(
     } 
     // 3️⃣ Update existing user
     else {
+      if (user) {
+        if (!user.stripeCustomerId && stripeCustomerId) user.stripeCustomerId = stripeCustomerId;
+        if (!user.email && identifier.includes("@")) user.email = identifier;
+      }
+
       user.balance = (user.balance || 0) + amountChange;
 
       // ✅ Update Stripe-related fields if needed
