@@ -158,16 +158,22 @@ app.post(
     // Handle webhook events
     switch (event.type) {
   case "checkout.session.completed": {
-    const session = event.data.object;
-    const customerEmail = session.customer_email;
-    const customerId = session.customer; // ✅ Stripe customer ID
-    const amount = session.amount_total / 100;
-    const subscriptionId = session.subscription;
-    console.log(`✅ Payment completed: ${customerEmail} paid $${amount}`);
+  const session = event.data.object;
+  const customerEmail = session.customer_email;
+  const customerId = session.customer;
+  const amount = session.amount_total / 100;
+  const subscriptionId = session.subscription;
 
-    await updateUserBalance(customerEmail, amount, customerId,subscriptionId);
-    break;
-  }
+  const lineItems = await stripe.checkout.sessions.listLineItems(session.id, { limit: 1 });
+  const priceId = lineItems.data[0].price.id;
+  const planName = getPlanNameFromPriceId(priceId);
+
+  console.log(`✅ Payment completed: ${customerEmail} paid $${amount}, Plan: ${planName}`);
+
+  await updateUserBalance(customerEmail, amount, customerId, subscriptionId, planName);
+  break;
+}
+
 
   case "invoice.payment_succeeded": {
     const invoice = event.data.object;
