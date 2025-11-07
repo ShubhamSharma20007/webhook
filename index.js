@@ -176,12 +176,11 @@ app.post(
 
 
   case "invoice.payment_succeeded": {
-    const invoice = event.data.object;
-    const customerId = invoice.customer;
-    const amount = invoice.amount_paid / 100;
-      const subscriptionId = session.subscription;
-    console.log(`💰 Subscription payment succeeded for ${customerId}`);
-    await updateUserBalance(customerId, amount, customerId,subscriptionId);
+const invoice = event.data.object;
+  const amountPaid = invoice.amount_paid / 100;
+  const customerId = invoice.customer;
+  const planName = invoice.lines.data[0]?.price?.nickname || 'unknown';
+  await updateUserBalance(customerId, amountPaid, customerId, invoice.subscription, planName);
     break;
   }
 
